@@ -1,49 +1,78 @@
-const { App } = require('@slack/bolt');
-const OpenAI = require('openai'); // Import OpenAI as a default import
+const { App, ExpressReceiver } = require('@slack/bolt');
+const OpenAI = require('openai');
 require('dotenv').config();
 
-// Initialize the Slack app
+// Initialize the ExpressReceiver
+const receiver = new ExpressReceiver({
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  processBeforeResponse: true
+});
+
+// Initialize the Slack app with the receiver
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  receiver
 });
 
 // Initialize OpenAI API
-const configuration = new OpenAI.Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAI.OpenAIApi(configuration);
 
 // Slack event listener for messages
 app.message(async ({ message, say }) => {
-  if (message.subtype && message.subtype === 'bot_message') return; // Ignore bot messages
+  try {
+    if (message.subtype && message.subtype === 'bot_message') return;
 
-  // Send the message content to OpenAI for a response
-  const response = await openai.createChatCompletion({
-    model: 'gpt-3.5-turbo',
-    messages: [{ role: 'user', content: message.text }],
-  });
+    // Optional: Add a typing indicator
+    await say({
+      type: 'typing'
+    });
 
-  // Send back the OpenAI-generated response to Slack
-  await say(response.data.choices[0].message.content);
+    // Send the message content to OpenAI for a response
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [{ role: 'user', content: message.text }],
+      temperature: 0.7,
+      max_tokens: 500
+    });
+
+    // Send back the OpenAI-generated response to Slack
+    await say(completion.choices[0].message.content);
+  } catch (error) {
+    console.error('Error processing message:', error);
+    await say('Sorry, I encountered an error processing your message.');
+  }
 });
+
+// Error handler
+app.error(async (error) => {
+  console.error('Global error handler:', error);
+});
+
+// Start the app
+(async () => {
+  try {
+    await app.start(process.env.PORT || 3000);
+    console.log('⚡️ Bolt app is running!');
+  } catch (error) {
+    console.error('Unable to start App:', error);
+  }
+})();
 
 // Vercel serverless function handler
 export default async function handler(req, res) {
-  // Check for Slack's URL verification request
   if (req.method === 'POST') {
-    const { type, challenge } = req.body;
-
-    // Handle URL verification challenge
-    if (type === 'url_verification') {
-      return res.status(200).json({ challenge }); // Respond with the challenge
+    // Handle Slack's URL verification challenge
+    if (req.body.type === 'url_verification') {
+      return res.status(200).json({ challenge: req.body.challenge });
     }
 
-    // Start the Slack app for other event requests
-    await app.start();
-    return res.status(200).send('Slack bot is running');
+    // Forward other requests to the Bolt receiver
+    await receiver.router.handle(req, res);
+  } else {
+    // Handle other HTTP methods
+    res.setHeader('Allow', 'POST');
+    res.status(405).end('Method Not Allowed');
   }
-
-  // Handle unsupported HTTP methods
-  return res.status(405).send('Method Not Allowed');
 }
