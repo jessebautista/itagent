@@ -11,7 +11,7 @@ const openai = new OpenAI({
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
-  processBeforeResponse: true,
+  processBeforeResponse: true, // Ensures Slack responses are sent before processing is complete
 });
 
 // Slack event listener for messages
@@ -27,20 +27,20 @@ app.event('message', async ({ event, say }) => {
       model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: event.text }],
       temperature: 0.7,
-      max_tokens: 500
+      max_tokens: 500,
     });
 
     // Send back the OpenAI-generated response to Slack
     await say({
       text: completion.choices[0].message.content,
-      thread_ts: event.thread_ts || event.ts // This will reply in thread if message is in thread
+      thread_ts: event.thread_ts || event.ts, // This will reply in a thread if the message is in a thread
     });
 
   } catch (error) {
     console.error('Error processing message:', error);
     await say({
       text: 'Sorry, I encountered an error processing your message.',
-      thread_ts: event.thread_ts || event.ts
+      thread_ts: event.thread_ts || event.ts,
     });
   }
 });
@@ -57,9 +57,8 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Process the event
-    await app.processEvent(req.body);
-    res.status(200).json({ ok: true });
+    // Manually process the event via app’s receiver
+    await app.receiver.requestListener(req, res); // Send the request and response directly to the receiver
   } catch (error) {
     console.error('Error processing event:', error);
     res.status(500).json({ error: 'Internal server error' });
