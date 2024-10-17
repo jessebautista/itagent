@@ -1,78 +1,67 @@
-const { App, ExpressReceiver } = require('@slack/bolt');
+const { App } = require('@slack/bolt');
 const OpenAI = require('openai');
 require('dotenv').config();
-
-// Initialize the ExpressReceiver
-const receiver = new ExpressReceiver({
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
-  processBeforeResponse: true
-});
-
-// Initialize the Slack app with the receiver
-const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,
-  receiver
-});
 
 // Initialize OpenAI API
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Slack event listener for messages
-app.message(async ({ message, say }) => {
-  try {
-    if (message.subtype && message.subtype === 'bot_message') return;
+// Initialize the Slack app
+const app = new App({
+  token: process.env.SLACK_BOT_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  processBeforeResponse: true,
+});
 
-    // Optional: Add a typing indicator
-    await say({
-      type: 'typing'
-    });
+// Slack event listener for messages
+app.event('message', async ({ event, say }) => {
+  try {
+    // Ignore bot messages and messages without text
+    if (event.bot_id || !event.text) return;
+
+    console.log('Received message:', event.text);
 
     // Send the message content to OpenAI for a response
     const completion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
-      messages: [{ role: 'user', content: message.text }],
+      messages: [{ role: 'user', content: event.text }],
       temperature: 0.7,
       max_tokens: 500
     });
 
     // Send back the OpenAI-generated response to Slack
-    await say(completion.choices[0].message.content);
+    await say({
+      text: completion.choices[0].message.content,
+      thread_ts: event.thread_ts || event.ts // This will reply in thread if message is in thread
+    });
+
   } catch (error) {
     console.error('Error processing message:', error);
-    await say('Sorry, I encountered an error processing your message.');
+    await say({
+      text: 'Sorry, I encountered an error processing your message.',
+      thread_ts: event.thread_ts || event.ts
+    });
   }
 });
-
-// Error handler
-app.error(async (error) => {
-  console.error('Global error handler:', error);
-});
-
-// Start the app
-(async () => {
-  try {
-    await app.start(process.env.PORT || 3000);
-    console.log('⚡️ Bolt app is running!');
-  } catch (error) {
-    console.error('Unable to start App:', error);
-  }
-})();
 
 // Vercel serverless function handler
-export default async function handler(req, res) {
-  if (req.method === 'POST') {
-    // Handle Slack's URL verification challenge
-    if (req.body.type === 'url_verification') {
-      return res.status(200).json({ challenge: req.body.challenge });
-    }
-
-    // Forward other requests to the Bolt receiver
-    await receiver.router.handle(req, res);
-  } else {
-    // Handle other HTTP methods
-    res.setHeader('Allow', 'POST');
-    res.status(405).end('Method Not Allowed');
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
-}
+
+  // Handle Slack URL verification
+  if (req.body.type === 'url_verification') {
+    return res.status(200).json({ challenge: req.body.challenge });
+  }
+
+  try {
+    // Process the event
+    await app.processEvent(req.body);
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error('Error processing event:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
