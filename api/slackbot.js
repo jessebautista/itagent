@@ -1,4 +1,4 @@
-const { App } = require('@slack/bolt');
+const { App, ExpressReceiver } = require('@slack/bolt');
 const OpenAI = require('openai');
 require('dotenv').config();
 
@@ -7,11 +7,16 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Create a custom receiver for handling requests
+const receiver = new ExpressReceiver({
+  signingSecret: process.env.SLACK_SIGNING_SECRET
+});
+
 // Initialize the Slack app
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
-  processBeforeResponse: true, // Ensures Slack responses are sent before processing is complete
+  receiver, // Use the custom receiver
+  processBeforeResponse: true
 });
 
 // Slack event listener for messages
@@ -47,18 +52,14 @@ app.event('message', async ({ event, say }) => {
 
 // Vercel serverless function handler
 module.exports = async (req, res) => {
+  // Pass incoming request to the receiver
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Handle Slack URL verification
-  if (req.body.type === 'url_verification') {
-    return res.status(200).json({ challenge: req.body.challenge });
-  }
-
   try {
-    // Manually process the event via app’s receiver
-    await app.receiver.requestListener(req, res); // Send the request and response directly to the receiver
+    // Let the receiver handle the request
+    await receiver.app(req, res);
   } catch (error) {
     console.error('Error processing event:', error);
     res.status(500).json({ error: 'Internal server error' });
