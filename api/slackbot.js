@@ -1,5 +1,5 @@
 const { App } = require('@slack/bolt');
-const { OpenAIApi, Configuration } = require('openai');  // Ensure both are imported properly
+const OpenAI = require('openai'); // Import OpenAI as a default import
 require('dotenv').config();
 
 // Initialize the Slack app
@@ -9,10 +9,10 @@ const app = new App({
 });
 
 // Initialize OpenAI API
-const configuration = new Configuration({
+const configuration = new OpenAI.Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
+const openai = new OpenAI.OpenAIApi(configuration);
 
 // Slack event listener for messages
 app.message(async ({ message, say }) => {
